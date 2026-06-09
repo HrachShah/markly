@@ -81,6 +81,15 @@ function extractLinks(markdown) {
 function classify(url) {
   if (/^https?:\/\//i.test(url)) return "remote";
   if (url.startsWith("mailto:") || url.startsWith("#")) return "skip";
+  // Anything carrying a URI scheme other than http(s) — data:, file:,
+  // javascript:, ftp:, tel:, sms:, magnet:, etc — is not a path on
+  // disk, so falling through to the local-file check would either
+  // report a false "missing" (data:, javascript:) or, worse, succeed
+  // by reading a real file the user did not intend to expose
+  // (file:///etc/passwd). Treat the whole scheme-prefixed class as
+  // something the link checker can't meaningfully verify and skip it
+  // with a note.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) return "skip";
   return "local";
 }
 

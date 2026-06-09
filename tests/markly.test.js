@@ -92,6 +92,59 @@ test("non-existent path exits non-zero", () => {
   assert.match(r.stderr, /fatal: Error/);
 });
 
+test("skips links with non-http schemes (file:, javascript:, data:, ftp:, tel:)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-scheme-"));
+  writeFileSync(
+    join(dir, "schemes.md"),
+    [
+      "# Schemes",
+      "",
+      "- [js](javascript:alert(1))",
+      "- [data](data:text/plain,hello)",
+      "- [file](file:///etc/passwd)",
+      "- [ftp](ftp://example.com/x.txt)",
+      "- [tel](tel:+15551234567)",
+      "- [magnet](magnet:?xt=urn:btih:abc)",
+      "- [real local](README.md)",
+      "",
+    ].join("\n")
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const file = report.files.find((f) => f.path.endsWith("schemes.md"));
+    assert.ok(file);
+    const links = file.links;
+    // Every non-http scheme URL should be 'skip' (would be 'missing' if
+    // treated as a local path, or worse, would resolve to a real file
+    // for file: links).
+    for (const link of links) {
+      if (
+        link.url.startsWith("javascript:") ||
+        link.url.startsWith("data:") ||
+        link.url.startsWith("file:") ||
+        link.url.startsWith("ftp:") ||
+        link.url.startsWith("tel:") ||
+        link.url.startsWith("magnet:")
+      ) {
+        assert.equal(
+          link.status,
+          "skip",
+          `expected ${link.url} to be skipped, got ${link.status}`
+        );
+      }
+    }
+    // The real local link should be ok
+    const real = links.find((l) => l.url === "README.md");
+    assert.ok(real);
+    assert.equal(real.status, "ok");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("skips code-fenced links", () => {
   const dir = mkdtempSync(join(tmpdir(), "markly-fence-"));
   writeFileSync(
