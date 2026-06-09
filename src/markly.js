@@ -46,7 +46,17 @@ function parseArgs(argv) {
 
 async function walk(dir) {
   const out = [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    // readdir can fail on a race (file removed between walk and stat),
+    // a permission-denied subdirectory, or a symlink loop on some
+    // platforms. Surface a warning on stderr and return what we have
+    // so a single unreadable directory doesn't kill the whole scan.
+    process.stderr.write(`warning: cannot read ${dir}: ${err.message || err}\n`);
+    return out;
+  }
   for (const e of entries) {
     if (e.name.startsWith(".") || e.name === "node_modules") continue;
     const full = join(dir, e.name);
@@ -54,6 +64,10 @@ async function walk(dir) {
       out.push(...(await walk(full)));
     } else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
       out.push(full);
+    } else if (e.isSymbolicLink()) {
+      // Skip symlinks: a symlink loop (or to a non-md file) would
+      // otherwise be revisited on every walk() call, hanging the scan.
+      continue;
     }
   }
   return out;
