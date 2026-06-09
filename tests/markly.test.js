@@ -109,3 +109,21 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("rejects non-numeric --timeout", () => {
+  const r = runCli([".", "--timeout=abc", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout must be a positive integer/);
+});
+
+test("rejects zero --timeout", () => {
+  const r = runCli([".", "--timeout=0", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout must be a positive integer/);
+});
+
+test("rejects negative --timeout", () => {
+  const r = runCli([".", "--timeout=-5", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout must be a positive integer/);
+});
