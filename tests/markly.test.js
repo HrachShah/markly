@@ -109,3 +109,30 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("preserves balanced parentheses inside URLs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-paren-"));
+  const url = "https://en.wikipedia.org/wiki/Foo_(bar)";
+  writeFileSync(
+    join(dir, "wiki.md"),
+    `# Wiki\n\nSee [the Foo (bar) page](${url}).\n`,
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const wiki = report.files.find((f) => f.path.endsWith("wiki.md"));
+    assert.ok(wiki, "wiki.md should appear in the report");
+    const link = wiki.links.find((l) => l.url.startsWith("https://en.wikipedia.org"));
+    assert.ok(link, "wikipedia link should be parsed");
+    // The old regex truncated the URL to '...Foo_(bar' at the first ')',
+    // so the closing ')' was dropped. The fix scans for the matching ')'
+    // at depth 0, so the full URL with its trailing ')' round-trips.
+    assert.ok(
+      link.url.endsWith("Foo_(bar)"),
+      `expected URL to end with 'Foo_(bar)' but got '${link.url}'`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -66,12 +66,65 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+  // Scan for inline [text](url) and [text](url "title") forms. We do this
+  // by hand instead of with a single regex because URLs are allowed to
+  // contain balanced parentheses (CommonMark spec) and a regex like
+  // [^)\s]+ stops at the first ')' and truncates the URL.
+  const openRe = /\[([^\]\n]+)\]\(/g;
   let m;
-  while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+  while ((m = openRe.exec(stripped)) !== null) {
+    const text = m[1];
+    const urlStart = m.index + m[0].length; // points at the first char of the URL
+    let depth = 0;
+    let urlEnd = -1;
+    for (let j = urlStart; j < stripped.length; j++) {
+      const ch = stripped[j];
+      if (ch === "\\" && j + 1 < stripped.length) {
+        // Skip the next character so an escaped \( or \) inside a URL
+        // doesn't throw off the depth count.
+        j++;
+        continue;
+      }
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        if (depth === 0) { urlEnd = j; break; }
+        depth--;
+      } else if (ch === "\n") {
+        // A link span must not contain a hard line break in CommonMark.
+        urlEnd = -1;
+        break;
+      }
+    }
+    if (urlEnd === -1) continue;
+    let url = stripped.slice(urlStart, urlEnd);
+
+    // Optional whitespace + "title" after the URL.
+    let rest = stripped.slice(urlEnd + 1);
+    const titleMatch = /^\s+"([^"]*)"/.exec(rest);
+    let title = null;
+    if (titleMatch) {
+      title = titleMatch[1];
+      // Consume the title from the input so openRe's next exec doesn't
+      // re-enter the same span.
+      openRe.lastIndex = urlEnd + 1 + titleMatch[0].length;
+    } else {
+      // No title — leave the cursor just past the closing ')'.
+      openRe.lastIndex = urlEnd + 1;
+    }
+
+    // CommonMark allows a single space between url and title with no
+    // quotes when the title is itself balanced parens; we don't try to
+    // parse that edge case here, the quoted form is the common one.
+    links.push(title ? { text, url, title } : { text, url });
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
+
+  // Bare autolinks: <https://...> and free-floating http(s)://...
+  const autolink = /<((?:https?|mailto):[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
+  }
+  const bare = /(?:^|[\s>])((?:https?|mailto):\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });
   }
