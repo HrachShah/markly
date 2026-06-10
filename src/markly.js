@@ -46,7 +46,17 @@ function parseArgs(argv) {
 
 async function walk(dir) {
   const out = [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    // readdir can fail on a race (file removed between walk and stat),
+    // a permission-denied subdirectory, or a symlink loop on some
+    // platforms. Surface a warning on stderr and return what we have
+    // so a single unreadable directory doesn't kill the whole scan.
+    process.stderr.write(`warning: cannot read ${dir}: ${err.message || err}\n`);
+    return out;
+  }
   for (const e of entries) {
     if (e.name.startsWith(".") || e.name === "node_modules") continue;
     const full = join(dir, e.name);
@@ -54,6 +64,10 @@ async function walk(dir) {
       out.push(...(await walk(full)));
     } else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
       out.push(full);
+    } else if (e.isSymbolicLink()) {
+      // Skip symlinks: a symlink loop (or to a non-md file) would
+      // otherwise be revisited on every walk() call, hanging the scan.
+      continue;
     }
   }
   return out;
@@ -71,9 +85,14 @@ function extractLinks(markdown) {
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
+  // Match http(s):// at start-of-string OR immediately after a
+  // whitespace char or angle bracket. The capturing group captures only
+  // the URL itself, but the leading-context character (if any) is part
+  // of the regex match and consumes one character of input, so the
+  // regex's lastIndex advances correctly past the URL on the next call.
+  const bare = /(^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[1] });
+    links.push({ text: m[2], url: m[2] });
   }
   return links;
 }
