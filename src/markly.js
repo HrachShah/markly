@@ -181,6 +181,17 @@ function formatReport(report, asJson) {
   return lines.join("\n") + "\n";
 }
 
+function hasFailures(report) {
+  for (const file of report.files) {
+    for (const link of file.links) {
+      if (link.status === "missing" || link.status === "broken" || link.status === "error") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 async function run(opts) {
   if (!opts.dir) {
     process.stderr.write("error: directory required\n");
@@ -219,6 +230,9 @@ async function run(opts) {
     report.files.push({ path: f, links: checked });
   }
   process.stdout.write(formatReport(report, opts.json));
+  if (!opts.json && hasFailures(report)) {
+    process.exitCode = 1;
+  }
 }
 
 const argv = process.argv.slice(2);

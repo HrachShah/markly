@@ -43,7 +43,9 @@ test("scans directory and reports missing local link", () => {
   const dir = makeTree();
   try {
     const r = runCli([dir, "--no-fetch"]);
-    assert.equal(r.status, 0);
+    // The bundled tree intentionally has a broken local link (nope.md), so
+    // the text report exits 1. The --json variant below is for parsing.
+    assert.equal(r.status, 1);
     assert.match(r.stdout, /nested\/guide\.md/);
     assert.match(r.stdout, /nested\/index\.md|nested\/nope\.md|MISS/);
   } finally {
@@ -55,17 +57,23 @@ test("counts OK links for files that exist", () => {
   const dir = makeTree();
   try {
     const r = runCli([dir, "--no-fetch"]);
-    assert.equal(r.status, 0);
+    // Same fixture: the OK link is present but the other link is missing,
+    // so the text-report exit code is 1.
+    assert.equal(r.status, 1);
     assert.match(r.stdout, /\[OK {2}\] nested\/guide\.md/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("--json emits a parseable report", () => {
+test("--json emits a parseable report and exits 0 even with broken links", () => {
   const dir = makeTree();
   try {
     const r = runCli([dir, "--no-fetch", "--json"]);
+    // JSON output is for downstream parsing, not a CI gate. The text
+    // exit-code contract is intentionally not applied to --json so that
+    // `markly --json | jq .files[].links` keeps working regardless of
+    // broken-link content.
     assert.equal(r.status, 0);
     const report = JSON.parse(r.stdout);
     assert.ok(Array.isArray(report.files));
@@ -105,6 +113,19 @@ test("skips code-fenced links", () => {
     assert.match(r.stdout, /OK/);
     // fenced link should not appear in output
     assert.ok(!r.stdout.includes("definitely-not-a-real-link.md"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("exits 0 when every local link resolves to an existing file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-clean-"));
+  writeFileSync(join(dir, "README.md"), "# Root\n");
+  writeFileSync(join(dir, "doc.md"), "[home](README.md)\n");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /Summary: 2 file\(s\), 1 ok/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
