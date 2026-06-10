@@ -76,6 +76,14 @@ function extractLinks(markdown) {
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
   }
+  // CommonMark autolinks: <https://example.com> or <http://example.com>.
+  // The bare-URL pass below intentionally does not match this form because its
+  // leading-context group is (?:^|[\s>]) (no '<') and its URL class excludes
+  // '>'. A separate pass keeps both behaviors simple.
+  const autolink = /<((?:https?|mailto):\/\/[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
+  }
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });

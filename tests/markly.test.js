@@ -127,3 +127,19 @@ test("rejects negative --timeout", () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--timeout must be a positive integer/);
 });
+
+test("captures CommonMark autolinks wrapped in angle brackets", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-autolink-"));
+  writeFileSync(
+    join(dir, "page.md"),
+    "# Autolinks\n\nSee <https://example.com> for details, also <http://example.org/path>.\n\nJust some text with no link here.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /example\.com/);
+    assert.match(r.stdout, /example\.org\/path/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
