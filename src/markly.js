@@ -34,8 +34,13 @@ function parseArgs(argv) {
     if (arg === "--no-fetch") { opts.fetch = false; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg.startsWith("--timeout=")) {
-      const v = Number(arg.slice("--timeout=".length));
-      if (Number.isFinite(v) && v > 0) opts.timeout = v;
+      const raw = arg.slice("--timeout=".length);
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v <= 0) {
+        process.stderr.write(`error: --timeout must be a positive integer (got ${JSON.stringify(raw)})\n`);
+        process.exit(2);
+      }
+      opts.timeout = Math.floor(v);
       continue;
     }
     if (arg.startsWith("--")) continue;
@@ -70,6 +75,14 @@ function extractLinks(markdown) {
   let m;
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
+  }
+  // CommonMark autolinks: <https://example.com> or <http://example.com>.
+  // The bare-URL pass below intentionally does not match this form because its
+  // leading-context group is (?:^|[\s>]) (no '<') and its URL class excludes
+  // '>'. A separate pass keeps both behaviors simple.
+  const autolink = /<((?:https?|mailto):\/\/[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
   }
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
@@ -149,6 +162,9 @@ function formatReport(report, asJson) {
   }
   const lines = [];
   let totalOk = 0, totalBroken = 0, totalMissing = 0, totalError = 0, totalSkip = 0;
+  for (const errEntry of report.errors || []) {
+    lines.push(`${relative(report.root, errEntry.path) || errEntry.path}  (skipped: ${errEntry.error})`);
+  }
   for (const file of report.files) {
     lines.push(relative(report.root, file.path) || file.path);
     if (file.links.length === 0) {
@@ -193,9 +209,24 @@ async function run(opts) {
     process.exit(2);
   }
   const files = await walk(opts.dir);
-  const report = { root: opts.dir, files: [] };
+  const report = { root: opts.dir, files: [], errors: [] };
   for (const f of files) {
-    const md = await readFile(f, "utf8");
+    let md;
+    try {
+      md = await readFile(f, "utf8");
+    } catch (err) {
+      // A file that was listed in walk() can become unreadable between the
+      // readdir and readFile calls (race against another process), or a
+      // permission/IO failure can surface here. Crash the whole run with a
+      // stack trace for a single bad file is unfriendly — a docs site with
+      // one .md that has had its permissions scrambled would lose its full
+      // link report. Surface the file as a per-file error and keep scanning
+      // the rest.
+      const detail = err && err.code ? `${err.code}: ${err.message || err}` : String(err && err.message || err);
+      report.errors.push({ path: f, error: detail });
+      process.stderr.write(`warn: could not read ${f}: ${detail}\n`);
+      continue;
+    }
     const links = extractLinks(md);
     const checked = [];
     for (const link of links) {
