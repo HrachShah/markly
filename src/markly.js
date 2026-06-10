@@ -34,8 +34,13 @@ function parseArgs(argv) {
     if (arg === "--no-fetch") { opts.fetch = false; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg.startsWith("--timeout=")) {
-      const v = Number(arg.slice("--timeout=".length));
-      if (Number.isFinite(v) && v > 0) opts.timeout = v;
+      const raw = arg.slice("--timeout=".length);
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v <= 0) {
+        process.stderr.write(`error: --timeout must be a positive integer (got ${JSON.stringify(raw)})\n`);
+        process.exit(2);
+      }
+      opts.timeout = Math.floor(v);
       continue;
     }
     if (arg.startsWith("--")) continue;
@@ -70,6 +75,14 @@ function extractLinks(markdown) {
   let m;
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
+  }
+  // CommonMark autolinks: <https://example.com> or <http://example.com>.
+  // The bare-URL pass below intentionally does not match this form because its
+  // leading-context group is (?:^|[\s>]) (no '<') and its URL class excludes
+  // '>'. A separate pass keeps both behaviors simple.
+  const autolink = /<((?:https?|mailto):\/\/[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
   }
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
