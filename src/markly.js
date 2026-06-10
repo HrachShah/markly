@@ -162,6 +162,9 @@ function formatReport(report, asJson) {
   }
   const lines = [];
   let totalOk = 0, totalBroken = 0, totalMissing = 0, totalError = 0, totalSkip = 0;
+  for (const errEntry of report.errors || []) {
+    lines.push(`${relative(report.root, errEntry.path) || errEntry.path}  (skipped: ${errEntry.error})`);
+  }
   for (const file of report.files) {
     lines.push(relative(report.root, file.path) || file.path);
     if (file.links.length === 0) {
@@ -206,9 +209,24 @@ async function run(opts) {
     process.exit(2);
   }
   const files = await walk(opts.dir);
-  const report = { root: opts.dir, files: [] };
+  const report = { root: opts.dir, files: [], errors: [] };
   for (const f of files) {
-    const md = await readFile(f, "utf8");
+    let md;
+    try {
+      md = await readFile(f, "utf8");
+    } catch (err) {
+      // A file that was listed in walk() can become unreadable between the
+      // readdir and readFile calls (race against another process), or a
+      // permission/IO failure can surface here. Crash the whole run with a
+      // stack trace for a single bad file is unfriendly — a docs site with
+      // one .md that has had its permissions scrambled would lose its full
+      // link report. Surface the file as a per-file error and keep scanning
+      // the rest.
+      const detail = err && err.code ? `${err.code}: ${err.message || err}` : String(err && err.message || err);
+      report.errors.push({ path: f, error: detail });
+      process.stderr.write(`warn: could not read ${f}: ${detail}\n`);
+      continue;
+    }
     const links = extractLinks(md);
     const checked = [];
     for (const link of links) {

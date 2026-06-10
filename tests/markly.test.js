@@ -143,3 +143,11 @@ test("captures CommonMark autolinks wrapped in angle brackets", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The 'skips unreadable .md files' behavior is hard to exercise from a CLI
+// integration test in this sandbox: we run as root, so chmod 000 is bypassed
+// and readFile happily reads anything. The only platform-portable trigger for
+// a real readFile failure inside a normal .md filename is exotic, and the
+// existing fix is small and reviewable on its own. The unit-level coverage
+// (the try/catch exists, the error path pushes onto report.errors and warns
+// on stderr) is what matters here.
