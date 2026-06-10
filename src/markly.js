@@ -85,9 +85,14 @@ function extractLinks(markdown) {
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
+  // Match http(s):// at start-of-string OR immediately after a
+  // whitespace char or angle bracket. The capturing group captures only
+  // the URL itself, but the leading-context character (if any) is part
+  // of the regex match and consumes one character of input, so the
+  // regex's lastIndex advances correctly past the URL on the next call.
+  const bare = /(^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[1] });
+    links.push({ text: m[2], url: m[2] });
   }
   return links;
 }

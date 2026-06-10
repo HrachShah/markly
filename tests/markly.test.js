@@ -109,3 +109,30 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("captures bare URLs at the start of a line", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-bare-"));
+  writeFileSync(
+    join(dir, "bare.md"),
+    "https://example.com/start\n[text](https://example.com/mid)\ntrailing https://example.com/end\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const file = report.files.find((f) => f.path.endsWith("bare.md"));
+    assert.ok(file, "bare.md should be in the report");
+    const urls = file.links.map((l) => l.url).sort();
+    assert.deepEqual(
+      urls,
+      [
+        "https://example.com/end",
+        "https://example.com/mid",
+        "https://example.com/start",
+      ],
+      "all three URLs (start-of-line bare, mid-line bracketed, mid-line bare) must be captured",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
