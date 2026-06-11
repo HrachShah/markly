@@ -109,3 +109,39 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("skips image markdown when extracting links", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-img-"));
+  writeFileSync(
+    join(dir, "imgs.md"),
+    "# Imgs\n\nInline ![badge](https://cdn.example.com/badge.svg) is not a link.\n\nSee the [guide](README.md) for the real link.\n\nRef-style: ![logo][logo-ref] with caption.\n\n[logo-ref]: https://cdn.example.com/logo.png\n",
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    // image URLs must not appear anywhere in the report
+    assert.ok(!r.stdout.includes("badge.svg"), `image url leaked into report:\n${r.stdout}`);
+    assert.ok(!r.stdout.includes("logo.png"), `ref-style image url leaked into report:\n${r.stdout}`);
+    assert.ok(!r.stdout.includes("cdn.example.com"), `cdn host leaked into report:\n${r.stdout}`);
+    // the real link still has to show up
+    assert.match(r.stdout, /README\.md/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("ref-style image definition URL is not reported as a link", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-img2-"));
+  writeFileSync(
+    join(dir, "imgs.md"),
+    "# Imgs\n\n![logo][logo-ref]\n\n[logo-ref]: https://cdn.example.com/logo.png\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.ok(!r.stdout.includes("logo.png"), `ref image def leaked:\n${r.stdout}`);
+    assert.ok(!r.stdout.includes("cdn.example.com"), `cdn host leaked:\n${r.stdout}`);
+    assert.match(r.stdout, /\(no links\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

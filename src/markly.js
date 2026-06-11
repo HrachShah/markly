@@ -59,12 +59,22 @@ async function walk(dir) {
   return out;
 }
 
-// Matches [text](url) and bare <url> forms. Skips code fences and inline code
-// via a simple pre-pass that strips them.
+// Matches [text](url) and bare <url> forms. Skips code fences, inline code,
+// and image markdown (![alt](url) and ![alt][ref]) via a simple pre-pass that
+// strips them. Image URLs are render-time assets, not user-navigable links,
+// so reporting them as "broken" when a CDN 404s would just be noise in CI.
 function extractLinks(markdown) {
+  // Image markdown and ref-style image definitions are not user-navigable
+  // links — they are render-time assets. Strip them in all three forms
+  // (inline, ref-style, and the ref-style definition line) before scanning
+  // for links, so a CDN 404 on a logo doesn't pollute CI link reports.
   const stripped = markdown
     .replace(/```[\s\S]*?```/g, "")
-    .replace(/`[^`\n]*`/g, "");
+    .replace(/`[^`\n]*`/g, "")
+    .replace(/!\[[^\]]*\]\([^)\s]+(?:\s+"[^"]*")?\)/g, "")
+    .replace(/!\[[^\]]*\]\[[^\]]*\]/g, "")
+    // Ref-style image/footnote definitions: "[id]: url" on its own line.
+    .replace(/^[ \t]*\[[^\]]+\]:[ \t]+\S+[ \t]*$/gm, "");
   const links = [];
   const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   let m;
