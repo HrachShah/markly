@@ -66,15 +66,136 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-  let m;
-  while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+  const protectedRanges = [];
+
+  const isWhitespace = (ch) => ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+  const overlaps = (start, end) => protectedRanges.some(([s, e]) => start < e && end > s);
+  const findLabelEnd = (str, start) => {
+    let depth = 0;
+    for (let i = start; i < str.length; i++) {
+      const ch = str[i];
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === "[") {
+        depth += 1;
+        continue;
+      }
+      if (ch === "]") {
+        if (depth === 0) return i;
+        depth -= 1;
+      }
+    }
+    return -1;
+  };
+  const scanBareUrl = (str, start) => {
+    let i = start;
+    let depth = 0;
+    while (i < str.length) {
+      const ch = str[i];
+      if (ch === "\\") {
+        i += Math.min(2, str.length - i);
+        continue;
+      }
+      if (ch === "(") {
+        depth += 1;
+        i += 1;
+        continue;
+      }
+      if (ch === ")") {
+        if (depth === 0) break;
+        depth -= 1;
+        i += 1;
+        continue;
+      }
+      if (isWhitespace(ch) || ch === "<" || ch === ">") break;
+      i += 1;
+    }
+    return i > start ? i : -1;
+  };
+
+  for (let i = 0; i < stripped.length; ) {
+    const isImage = stripped[i] === "!" && stripped[i + 1] === "[";
+    const isLink = stripped[i] === "[" || isImage;
+    if (isLink) {
+      const labelStart = i + (isImage ? 2 : 1);
+      const labelEnd = findLabelEnd(stripped, labelStart);
+      if (labelEnd !== -1) {
+        let j = labelEnd + 1;
+        while (isWhitespace(stripped[j])) j += 1;
+        if (stripped[j] === "(") {
+          let urlStart = j + 1;
+          while (isWhitespace(stripped[urlStart])) urlStart += 1;
+          let urlEnd = -1;
+          let closeIdx = -1;
+          let depth = 0;
+          for (let k = urlStart; k < stripped.length; k++) {
+            const ch = stripped[k];
+            if (ch === "\\") {
+              k += 1;
+              continue;
+            }
+            if (ch === "(") {
+              depth += 1;
+              continue;
+            }
+            if (ch === ")") {
+              if (depth === 0) {
+                urlEnd = k;
+                closeIdx = k;
+                break;
+              }
+              depth -= 1;
+              continue;
+            }
+            if (depth === 0 && isWhitespace(ch)) {
+              urlEnd = k;
+              let t = k;
+              while (isWhitespace(stripped[t])) t += 1;
+              if (stripped[t] === '"' || stripped[t] === "'") {
+                const quote = stripped[t];
+                t += 1;
+                while (t < stripped.length) {
+                  const tc = stripped[t];
+                  if (tc === "\\") {
+                    t += 2;
+                    continue;
+                  }
+                  if (tc === quote) {
+                    t += 1;
+                    break;
+                  }
+                  t += 1;
+                }
+                while (isWhitespace(stripped[t])) t += 1;
+              }
+              if (stripped[t] === ")") closeIdx = t;
+              break;
+            }
+          }
+          if (urlEnd !== -1 && closeIdx !== -1) {
+            const url = stripped.slice(urlStart, urlEnd);
+            links.push({ text: stripped.slice(labelStart, labelEnd), url, isImage });
+            protectedRanges.push([i, closeIdx + 1]);
+            i = closeIdx + 1;
+            continue;
+          }
+        }
+      }
+    }
+    i += 1;
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
-  while ((m = bare.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[1] });
+
+  for (let i = 0; i < stripped.length; i++) {
+    if (!stripped.startsWith("http://", i) && !stripped.startsWith("https://", i)) continue;
+    const end = scanBareUrl(stripped, i);
+    if (end === -1 || overlaps(i, end)) continue;
+    const url = stripped.slice(i, end);
+    links.push({ text: url, url, isImage: false });
+    i = end - 1;
   }
+
   return links;
 }
 
@@ -199,6 +320,7 @@ async function run(opts) {
     const links = extractLinks(md);
     const checked = [];
     for (const link of links) {
+      if (link.isImage) continue;  // skip markdown images
       const kind = classify(link.url);
       if (kind === "skip") {
         checked.push({ ...link, status: "skip", kind });

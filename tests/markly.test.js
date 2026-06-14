@@ -109,3 +109,85 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("image syntax is parsed with isImage flag and not checked", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-img-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "# Doc\n\nInline [home](README.md) and image ![alt](missing.png)\n",
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const doc = report.files.find((f) => f.path.endsWith("doc.md"));
+    assert.ok(doc);
+    // Only the inline link should be checked; image link skipped
+    assert.equal(doc.links.length, 1);
+    assert.equal(doc.links[0].text, "home");
+    assert.equal(doc.links[0].url, "README.md");
+    assert.equal(doc.links[0].status, "ok");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("balanced parens in URL are captured fully", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-paren-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "See [wiki](https://en.wikipedia.org/wiki/Foo_(bar))\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const doc = report.files.find((f) => f.path.endsWith("doc.md"));
+    assert.ok(doc);
+    assert.equal(doc.links.length, 1);
+    assert.equal(doc.links[0].url, "https://en.wikipedia.org/wiki/Foo_(bar)");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("quoted titles do not leak into the URL", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-quote-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "[link](https://example.com 'a title')\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const doc = report.files.find((f) => f.path.endsWith("doc.md"));
+    assert.ok(doc);
+    assert.equal(doc.links.length, 1);
+    assert.equal(doc.links[0].url, "https://example.com");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("escaped brackets are skipped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-escape-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "Text \\[not a link\\](nope.md) and [real](README.md)\n",
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const doc = report.files.find((f) => f.path.endsWith("doc.md"));
+    assert.ok(doc);
+    // Only the real link is captured; the escaped bracket pair is ignored
+    assert.equal(doc.links.length, 1);
+    assert.equal(doc.links[0].url, "README.md");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
