@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -189,5 +189,49 @@ test("escaped brackets are skipped", () => {
     assert.equal(doc.links[0].url, "README.md");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("symlink to .md file is followed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-symlfile-"));
+  const real = mkdtempSync(join(tmpdir(), "markly-symlfile-real-"));
+  writeFileSync(join(real, "guide.md"), "# Guide\n\n[home](README.md)\n");
+  writeFileSync(join(real, "README.md"), "# x\n");
+  try {
+    symlinkSync(join(real, "guide.md"), join(dir, "guide.md"));
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    assert.ok(report.files.length >= 1);
+    const guide = report.files.find((f) => f.path.endsWith("guide.md"));
+    assert.ok(guide);
+    assert.equal(guide.links[0].url, "README.md");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(real, { recursive: true, force: true });
+  }
+});
+
+test("symlink to a directory is followed once, no infinite loop", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-symldir-"));
+  const real = mkdtempSync(join(tmpdir(), "markly-symldir-real-"));
+  mkdirSync(join(real, "docs"));
+  writeFileSync(join(real, "docs", "guide.md"), "# Guide\n\n[home](../README.md)\n");
+  writeFileSync(join(real, "README.md"), "# x\n");
+  // Make a self-referential symlink under the linked dir to verify the walker
+  // does not loop forever.
+  mkdirSync(join(dir, "linked"));
+  try {
+    symlinkSync(join(dir, "linked"), join(dir, "linked", "self"));
+    symlinkSync(real, join(dir, "linked", "real"));
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    // The real docs/guide.md must be reached via linked/real/docs/guide.md
+    const guide = report.files.find((f) => f.path.endsWith("guide.md"));
+    assert.ok(guide);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(real, { recursive: true, force: true });
   }
 });

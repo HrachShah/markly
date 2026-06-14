@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, realpath } from "node:fs/promises";
 import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,14 +44,49 @@ function parseArgs(argv) {
   return opts;
 }
 
-async function walk(dir) {
+async function walk(dir, visited) {
   const out = [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  // Resolve the real path of the directory so we can detect when a symlinked
+  // subtree points back to something we've already visited. This keeps the
+  // walker from recursing forever on a `loop -> ..` style symlink while still
+  // letting us follow plain symlinks to files or sibling directories.
+  let realKey;
+  try {
+    const r = await stat(dir);
+    if (!r.isDirectory()) return out;
+    realKey = await realpath(dir);
+  } catch (err) {
+    return out;
+  }
+  if (visited.has(realKey)) return out;
+  visited.add(realKey);
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    return out;
+  }
   for (const e of entries) {
     if (e.name.startsWith(".") || e.name === "node_modules") continue;
     const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      out.push(...(await walk(full)));
+    // Dirent.isDirectory()/isFile() return false for symlinks because the
+    // Dirent describes the symlink itself, not its target. Fall back to a
+    // stat() so symlinks to .md files and symlinks to other directories are
+    // picked up by the walker; the visited Set above prevents loops.
+    if (e.isDirectory() || e.isSymbolicLink()) {
+      try {
+        const s = await stat(full);
+        if (s.isDirectory()) {
+          out.push(...(await walk(full, visited)));
+          continue;
+        }
+        if (s.isFile() && e.name.toLowerCase().endsWith(".md")) {
+          out.push(full);
+          continue;
+        }
+      } catch (err) {
+        continue;
+      }
     } else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
       out.push(full);
     }
@@ -313,7 +348,7 @@ async function run(opts) {
     process.stderr.write(`error: ${opts.dir} is not a directory\n`);
     process.exit(2);
   }
-  const files = await walk(opts.dir);
+  const files = await walk(opts.dir, new Set());
   const report = { root: opts.dir, files: [] };
   for (const f of files) {
     const md = await readFile(f, "utf8");
