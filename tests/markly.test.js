@@ -92,6 +92,69 @@ test("non-existent path exits non-zero", () => {
   assert.match(r.stderr, /fatal: Error/);
 });
 
+test("pure in-page fragment links are reported as skip", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-anchor-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "# Index\n\n## Section\n\nSee [the section](#section).\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const doc = report.files.find((f) => f.path.endsWith("doc.md"));
+    assert.ok(doc);
+    const sec = doc.links.find((l) => l.url === "#section");
+    assert.ok(sec);
+    // Pure fragment links are short-circuited by classify() into the
+    // 'skip' bucket and never reach checkLocal, so kind stays 'skip'.
+    assert.equal(sec.status, "skip");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("local #fragment anchors are validated against the target file's headings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-anchor-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Index\n\n" +
+      "[present heading](other.md#section)\n" +
+      "[missing heading](other.md#no-such-heading)\n" +
+      "[custom id](other.md#custom-id)\n" +
+      "[broken file](missing.md#section)\n" +
+      "[no fragment](other.md)\n",
+  );
+  writeFileSync(
+    join(dir, "other.md"),
+    "## Section\n\n" +
+      "Some text.\n\n" +
+      "<a id=\"custom-id\"></a>\n\n" +
+      "More text.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const doc = report.files.find((f) => f.path.endsWith("index.md"));
+    assert.ok(doc);
+    const byText = Object.fromEntries(doc.links.map((l) => [l.text, l]));
+    assert.equal(byText["present heading"].status, "ok");
+    assert.equal(byText["present heading"].kind, "local-file");
+    assert.equal(byText["missing heading"].status, "missing");
+    assert.equal(byText["missing heading"].kind, "local-anchor");
+    assert.match(byText["missing heading"].detail, /no-such-heading/);
+    assert.equal(byText["custom id"].status, "ok");
+    assert.equal(byText["custom id"].kind, "local-file");
+    assert.equal(byText["broken file"].status, "missing");
+    assert.equal(byText["broken file"].kind, "local-file");
+    assert.equal(byText["no fragment"].status, "ok");
+    assert.equal(byText["no fragment"].kind, "local-file");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("skips code-fenced links", () => {
   const dir = mkdtempSync(join(tmpdir(), "markly-fence-"));
   writeFileSync(

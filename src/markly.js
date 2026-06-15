@@ -84,15 +84,90 @@ function classify(url) {
   return "local";
 }
 
+// Convert a markdown heading text to a GitHub-style anchor slug:
+//   - lowercase
+//   - drop punctuation
+//   - collapse whitespace to single hyphens
+//   - strip leading/trailing hyphens
+function slugifyHeading(text) {
+  return String(text == null ? "" : text)
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Pull every in-document anchor id from a markdown file:
+//   - ATX headings (# foo) and Setext headings (foo\n===)
+//   - explicit <a id="..."></a> / <a name="..."></a> tags
+function collectAnchors(markdown) {
+  const ids = new Set();
+  const lines = String(markdown == null ? "" : markdown).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
+    if (m) {
+      ids.add(slugifyHeading(m[1]));
+      continue;
+    }
+    m = line.match(/<a\s+(?:[^>]*\s+)?id\s*=\s*["']([^"']+)["']/i);
+    if (m) {
+      ids.add(m[1]);
+      continue;
+    }
+    m = line.match(/<a\s+(?:[^>]*\s+)?name\s*=\s*["']([^"']+)["']/i);
+    if (m) {
+      ids.add(m[1]);
+    }
+  }
+  return ids;
+}
+
 async function checkLocal(url, sourceFile) {
   const baseDir = dirname(sourceFile);
-  const stripped = url.split("#")[0].split("?")[0];
-  if (!stripped) return { status: "ok", kind: "local-anchor" };
+  const hashIdx = url.indexOf("#");
+  const pathPart = hashIdx === -1 ? url : url.slice(0, hashIdx);
+  const fragment = hashIdx === -1 ? "" : url.slice(hashIdx + 1);
+  const stripped = pathPart.split("?")[0];
+  if (!stripped) {
+    // Pure fragment link (#section). It points at the source file itself, and
+    // we do not re-parse the source file to verify the anchor, so mark as
+    // skip rather than OK — we did not actually check anything.
+    return { status: "skip", kind: "local-anchor", detail: "in-page fragment" };
+  }
   const abs = resolve(baseDir, stripped);
   try {
     const s = await stat(abs);
-    if (s.isDirectory()) return { status: "ok", kind: "local-dir" };
-    return { status: "ok", kind: "local-file" };
+    if (s.isDirectory()) {
+      return { status: "ok", kind: "local-dir" };
+    }
+    if (!fragment) {
+      return { status: "ok", kind: "local-file" };
+    }
+    // File exists; if a #fragment was given, verify the anchor is present
+    // in the target file. readFile is async and may throw on permission
+    // denied or weird encodings; treat those as 'error' rather than 'ok'.
+    let body;
+    try {
+      body = await readFile(abs, "utf8");
+    } catch (readErr) {
+      return {
+        status: "error",
+        kind: "local-file",
+        detail: `anchor check failed: ${readErr && readErr.message ? readErr.message : readErr}`,
+      };
+    }
+    const ids = collectAnchors(body);
+    if (ids.has(fragment)) {
+      return { status: "ok", kind: "local-file" };
+    }
+    return {
+      status: "missing",
+      kind: "local-anchor",
+      detail: `anchor '#${fragment}' not found in ${stripped}`,
+    };
   } catch (err) {
     if (err && err.code === "ENOENT") {
       return { status: "missing", kind: "local-file", detail: "file not found" };
