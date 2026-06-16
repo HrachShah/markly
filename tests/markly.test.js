@@ -109,3 +109,29 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("preserves balanced inner parens in link URLs", async () => {
+  const { extractLinks } = await import("../src/markly.js");
+  const cases = [
+    {
+      input: "See [Bar](https://en.wikipedia.org/wiki/Foo_(bar))",
+      url: "https://en.wikipedia.org/wiki/Foo_(bar)",
+      text: "Bar",
+    },
+    {
+      input: "And [multi](https://en.wikipedia.org/wiki/A_(b)_(c)_(d)) too",
+      url: "https://en.wikipedia.org/wiki/A_(b)_(c)_(d)",
+      text: "multi",
+    },
+    {
+      input: "[plain](good.md) and [wiki](https://en.wikipedia.org/wiki/X)",
+      url: "https://en.wikipedia.org/wiki/X",
+      text: "wiki",
+    },
+  ];
+  for (const c of cases) {
+    const found = extractLinks(c.input).find((l) => l.text === c.text);
+    assert.ok(found, `no link found for ${c.text} in ${c.input}`);
+    assert.equal(found.url, c.url);
+  }
+});
