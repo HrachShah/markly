@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, dirname, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -66,7 +66,10 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  // CommonMark allows balanced parens in the URL (e.g. Wikipedia's
+  // /wiki/Foo_(bar)). Match a paren group zero or more times so URLs with
+  // any number of matched inner parens are captured in full.
+  const re = /\[([^\]]+)\]\(((?:[^()\s]|\([^()]*\))+)(?:\s+"[^"]*")?\)/g;
   let m;
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
@@ -227,7 +230,18 @@ if (opts.help) {
   printHelp();
   process.exit(0);
 }
-run(opts).catch((err) => {
-  process.stderr.write(`fatal: ${err && err.stack ? err.stack : err}\n`);
-  process.exit(1);
-});
+const isCli = (() => {
+  try {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+})();
+if (isCli) {
+  run(opts).catch((err) => {
+    process.stderr.write(`fatal: ${err && err.stack ? err.stack : err}\n`);
+    process.exit(1);
+  });
+}
+
+export { extractLinks, classify, checkLocal, classifyHttpStatus, formatReport, run };
