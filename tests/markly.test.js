@@ -172,3 +172,95 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("scans .markdown and .mdx files in addition to .md", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-exts-"));
+  writeFileSync(
+    join(dir, "long.md"),
+    "# Long\n\n[home](home.md)\n",
+  );
+  writeFileSync(join(dir, "home.md"), "# Home\n");
+  writeFileSync(
+    join(dir, "named.markdown"),
+    "# Named\n\n[home](home.md)\n",
+  );
+  writeFileSync(
+    join(dir, "compiled.mdx"),
+    "# Comp\n\n[home](home.md)\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /long\.md/);
+    assert.match(r.stdout, /named\.markdown/);
+    assert.match(r.stdout, /compiled\.mdx/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CommonMark autolink <https://...> is detected as a remote link", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-autolink-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "# Index\n\nSee <https://example.com>.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /example\.com/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CommonMark angle-bracket URL form [text](<url>) is detected", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-angle-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "# Index\n\nSee [example](<https://example.com>).\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /example\.com/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("symlink to a doc file inside the scan root is followed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-symlink-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "# Index\n\nSee [linked](link.md).\n",
+  );
+  writeFileSync(join(dir, "link.md"), "# Linked\n");
+  const link = join(dir, "link");
+  const symlink = join(dir, "link-symlink");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /link\.md/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("symlink cycle is broken silently", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-cycle-"));
+  writeFileSync(
+    join(dir, "doc.md"),
+    "# Index\n\nSee [linked](link.md).\n",
+  );
+  writeFileSync(join(dir, "link.md"), "# Linked\n");
+  const link = join(dir, "link");
+  const symlink = join(dir, "link-symlink");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /link\.md/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

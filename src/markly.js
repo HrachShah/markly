@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, realpath } from "node:fs/promises";
 import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,16 +44,42 @@ function parseArgs(argv) {
   return opts;
 }
 
-async function walk(dir) {
+const MD_EXTS = new Set([".md", ".markdown", ".mdx"]);
+
+async function walk(dir, visited = new Set()) {
+  let real;
+  try {
+    real = await realpath(dir);
+  } catch {
+    return [];
+  }
+  if (visited.has(real)) return [];
+  visited.add(real);
   const out = [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
   for (const e of entries) {
     if (e.name.startsWith(".") || e.name === "node_modules") continue;
     const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      out.push(...(await walk(full)));
-    } else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
-      out.push(full);
+    // readdir with withFileTypes reports symlinks with isSymbolicLink()=true
+    // and isFile()/isDirectory()=false. stat the entry to follow the link so
+    // symlinked docs and symlinked doc directories are scanned too.
+    let s;
+    try {
+      s = await stat(full);
+    } catch {
+      continue;
+    }
+    if (s.isDirectory()) {
+      out.push(...(await walk(full, visited)));
+    } else if (s.isFile()) {
+      const dot = e.name.lastIndexOf(".");
+      const ext = dot === -1 ? "" : e.name.slice(dot).toLowerCase();
+      if (MD_EXTS.has(ext)) out.push(full);
     }
   }
   return out;
@@ -66,10 +92,24 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  // CommonMark angle-bracket-wrapped autolinks: <https://example.com> and
+  // <mailto:user@example.com>. CommonMark spec §6.5 (Autolinks). The previous
+  // implementation only matched bare URLs preceded by whitespace or '>', so
+  // the angle-bracket form — which appears on its own — was silently dropped
+  // and a CommonMark autolink reference in a doc would never be checked.
+  // (mailto: has no '://' so the regex has to allow both forms.)
+  const autolink = /<((?:https?:\/\/[^<>\s]+|mailto:[^<>\s]+))>/g;
   let m;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
+  }
+  // [text](url) with optional "title" — also matches the angle-bracket URL
+  // form [text](<url with (parens)>) per CommonMark §6.3.
+  const re = /\[([^\]]+)\]\(<([^<>\n]+)>(?:\s+"[^"]*")?\)|\[([^\]]+)\]\(([^)\s\\]+)(?:\s+"[^"]*")?\)/g;
   while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+    const text = m[1] != null ? m[1] : m[3];
+    const url = m[2] != null ? m[2] : m[4];
+    links.push({ text, url });
   }
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
