@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, realpath } from "node:fs/promises";
 import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,16 +44,42 @@ function parseArgs(argv) {
   return opts;
 }
 
-async function walk(dir) {
+const MD_EXTS = new Set([".md", ".markdown", ".mdx"]);
+
+async function walk(dir, visited = new Set()) {
+  let real;
+  try {
+    real = await realpath(dir);
+  } catch {
+    return [];
+  }
+  if (visited.has(real)) return [];
+  visited.add(real);
   const out = [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
   for (const e of entries) {
     if (e.name.startsWith(".") || e.name === "node_modules") continue;
     const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      out.push(...(await walk(full)));
-    } else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
-      out.push(full);
+    // readdir with withFileTypes reports symlinks with isSymbolicLink()=true
+    // and isFile()/isDirectory()=false. stat the entry to follow the link so
+    // symlinked docs and symlinked doc directories are scanned too.
+    let s;
+    try {
+      s = await stat(full);
+    } catch {
+      continue;
+    }
+    if (s.isDirectory()) {
+      out.push(...(await walk(full, visited)));
+    } else if (s.isFile()) {
+      const dot = e.name.lastIndexOf(".");
+      const ext = dot === -1 ? "" : e.name.slice(dot).toLowerCase();
+      if (MD_EXTS.has(ext)) out.push(full);
     }
   }
   return out;
@@ -66,10 +92,24 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  // CommonMark angle-bracket-wrapped autolinks: <https://example.com> and
+  // <mailto:user@example.com>. CommonMark spec §6.5 (Autolinks). The previous
+  // implementation only matched bare URLs preceded by whitespace or '>', so
+  // the angle-bracket form — which appears on its own — was silently dropped
+  // and a CommonMark autolink reference in a doc would never be checked.
+  // (mailto: has no '://' so the regex has to allow both forms.)
+  const autolink = /<((?:https?:\/\/[^<>\s]+|mailto:[^<>\s]+))>/g;
   let m;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
+  }
+  // [text](url) with optional "title" — also matches the angle-bracket URL
+  // form [text](<url with (parens)>) per CommonMark §6.3.
+  const re = /\[([^\]]+)\]\(<([^<>\n]+)>(?:\s+"[^"]*")?\)|\[([^\]]+)\]\(([^)\s\\]+)(?:\s+"[^"]*")?\)/g;
   while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+    const text = m[1] != null ? m[1] : m[3];
+    const url = m[2] != null ? m[2] : m[4];
+    links.push({ text, url });
   }
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
@@ -84,15 +124,90 @@ function classify(url) {
   return "local";
 }
 
+// Convert a markdown heading text to a GitHub-style anchor slug:
+//   - lowercase
+//   - drop punctuation
+//   - collapse whitespace to single hyphens
+//   - strip leading/trailing hyphens
+function slugifyHeading(text) {
+  return String(text == null ? "" : text)
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Pull every in-document anchor id from a markdown file:
+//   - ATX headings (# foo) and Setext headings (foo\n===)
+//   - explicit <a id="..."></a> / <a name="..."></a> tags
+function collectAnchors(markdown) {
+  const ids = new Set();
+  const lines = String(markdown == null ? "" : markdown).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
+    if (m) {
+      ids.add(slugifyHeading(m[1]));
+      continue;
+    }
+    m = line.match(/<a\s+(?:[^>]*\s+)?id\s*=\s*["']([^"']+)["']/i);
+    if (m) {
+      ids.add(m[1]);
+      continue;
+    }
+    m = line.match(/<a\s+(?:[^>]*\s+)?name\s*=\s*["']([^"']+)["']/i);
+    if (m) {
+      ids.add(m[1]);
+    }
+  }
+  return ids;
+}
+
 async function checkLocal(url, sourceFile) {
   const baseDir = dirname(sourceFile);
-  const stripped = url.split("#")[0].split("?")[0];
-  if (!stripped) return { status: "ok", kind: "local-anchor" };
+  const hashIdx = url.indexOf("#");
+  const pathPart = hashIdx === -1 ? url : url.slice(0, hashIdx);
+  const fragment = hashIdx === -1 ? "" : url.slice(hashIdx + 1);
+  const stripped = pathPart.split("?")[0];
+  if (!stripped) {
+    // Pure fragment link (#section). It points at the source file itself, and
+    // we do not re-parse the source file to verify the anchor, so mark as
+    // skip rather than OK — we did not actually check anything.
+    return { status: "skip", kind: "local-anchor", detail: "in-page fragment" };
+  }
   const abs = resolve(baseDir, stripped);
   try {
     const s = await stat(abs);
-    if (s.isDirectory()) return { status: "ok", kind: "local-dir" };
-    return { status: "ok", kind: "local-file" };
+    if (s.isDirectory()) {
+      return { status: "ok", kind: "local-dir" };
+    }
+    if (!fragment) {
+      return { status: "ok", kind: "local-file" };
+    }
+    // File exists; if a #fragment was given, verify the anchor is present
+    // in the target file. readFile is async and may throw on permission
+    // denied or weird encodings; treat those as 'error' rather than 'ok'.
+    let body;
+    try {
+      body = await readFile(abs, "utf8");
+    } catch (readErr) {
+      return {
+        status: "error",
+        kind: "local-file",
+        detail: `anchor check failed: ${readErr && readErr.message ? readErr.message : readErr}`,
+      };
+    }
+    const ids = collectAnchors(body);
+    if (ids.has(fragment)) {
+      return { status: "ok", kind: "local-file" };
+    }
+    return {
+      status: "missing",
+      kind: "local-anchor",
+      detail: `anchor '#${fragment}' not found in ${stripped}`,
+    };
   } catch (err) {
     if (err && err.code === "ENOENT") {
       return { status: "missing", kind: "local-file", detail: "file not found" };
