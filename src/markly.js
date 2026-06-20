@@ -86,9 +86,23 @@ function classify(url) {
 
 async function checkLocal(url, sourceFile) {
   const baseDir = dirname(sourceFile);
+  // Drop anchor + query first, then decode percent-encoded characters
+  // per CommonMark: `my%20file.md` should resolve to the on-disk
+  // `my file.md`, not be looked up literally with the %20 still in it.
   const stripped = url.split("#")[0].split("?")[0];
   if (!stripped) return { status: "ok", kind: "local-anchor" };
-  const abs = resolve(baseDir, stripped);
+  let abs;
+  try {
+    // decodeURIComponent can throw on a malformed sequence like "%ZZ";
+    // treat that as the caller authored the literal string and skip it.
+    abs = resolve(baseDir, decodeURIComponent(stripped));
+  } catch (err) {
+    if (err instanceof URIError) {
+      abs = resolve(baseDir, stripped);
+    } else {
+      throw err;
+    }
+  }
   try {
     const s = await stat(abs);
     if (s.isDirectory()) return { status: "ok", kind: "local-dir" };

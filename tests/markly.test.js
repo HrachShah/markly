@@ -109,3 +109,16 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("resolves percent-encoded local links", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-encode-"));
+  writeFileSync(join(dir, "src.md"), "See [home](hello%20world.md).\n");
+  writeFileSync(join(dir, "hello world.md"), "# Hello\n");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /OK\s+\] hello%20world\.md/);
+    assert.ok(!r.stdout.includes("MISS"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
