@@ -109,3 +109,59 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("resolves percent-encoded local links", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-encode-"));
+  writeFileSync(join(dir, "src.md"), "See [home](hello%20world.md).\n");
+  writeFileSync(join(dir, "hello world.md"), "# Hello\n");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /OK\s+\] hello%20world\.md/);
+    assert.ok(!r.stdout.includes("MISS"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("captures URLs with balanced parens in [text](url) form", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-paren-"));
+  // Wikipedia-style URL with one level of balanced parens should be captured
+  // whole, not truncated at the first `)`.
+  writeFileSync(
+    join(dir, "a.md"),
+    "See [wikipedia](https://en.wikipedia.org/wiki/URL_(URI)).\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const links = report.files[0].links;
+    // The link should include both opening and closing parens
+    const wiki = links.find((l) => l.url && l.url.includes("wikipedia"));
+    assert.ok(wiki, "expected wikipedia link to be extracted");
+    assert.ok(
+      wiki.url.endsWith("(URI))") || wiki.url.endsWith("(URI)"),
+      `expected URL to include trailing closing paren, got: ${wiki.url}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("extracts CommonMark <https://...> autolinks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-auto-"));
+  writeFileSync(
+    join(dir, "a.md"),
+    "Visit <https://example.com/page> today.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const links = report.files[0].links;
+    const autolink = links.find((l) => l.url === "https://example.com/page");
+    assert.ok(autolink, "expected <https://example.com/page> to be extracted");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
