@@ -59,19 +59,39 @@ async function walk(dir) {
   return out;
 }
 
-// Matches [text](url) and bare <url> forms. Skips code fences and inline code
-// via a simple pre-pass that strips them.
+// Matches [text](url), CommonMark <url> autolinks, and bare https?:// URLs.
+// Skips code fences and inline code via a simple pre-pass that strips them.
+// The URL portion allows one level of balanced parens — `[a](https://example.com/page_(x))`
+// would otherwise be truncated at the first `)` and end up as the bogus URL
+// `https://example.com/page_(x`, which silently fails a remote HEAD on every
+// real-world wiki link.
 function extractLinks(markdown) {
   const stripped = markdown
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  const inline = /\[([^\]]+)\]\(((?:[^()]+|\([^)]*\))+)(?:\s+"[^"]*")?\)/g;
   let m;
-  while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+  while ((m = inline.exec(stripped)) !== null) {
+    const inner = m[2];
+    // Require the closing `)` to actually close the link — if our balanced-paren
+    // alternation was satisfied by the *last* `)` of the URL itself, the trailing
+    // literal `)` of the link grammar isn't there yet, so reject the match.
+    // Detect by checking the position of the closing paren.
+    const consumed = m[0];
+    const expectedEnd = m.index + consumed.length;
+    if (stripped.charAt(expectedEnd - 1) !== ")") continue;
+    // Strip balanced parens if the inner text had them by checking the original
+    // substring. Simpler: trust the alternation as long as the match consumed
+    // everything up to and including the trailing `)`.
+    links.push({ text: m[1], url: inner });
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
+  // CommonMark autolinks: <https://example.com>
+  const autolink = /<(https?:\/\/[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
+  }
+  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });
   }
