@@ -73,18 +73,15 @@ function extractLinks(markdown) {
   const inline = /\[([^\]]+)\]\(((?:[^()]+|\([^)]*\))+)(?:\s+"[^"]*")?\)/g;
   let m;
   while ((m = inline.exec(stripped)) !== null) {
-    const inner = m[2];
-    // Require the closing `)` to actually close the link — if our balanced-paren
-    // alternation was satisfied by the *last* `)` of the URL itself, the trailing
-    // literal `)` of the link grammar isn't there yet, so reject the match.
-    // Detect by checking the position of the closing paren.
-    const consumed = m[0];
-    const expectedEnd = m.index + consumed.length;
-    if (stripped.charAt(expectedEnd - 1) !== ")") continue;
-    // Strip balanced parens if the inner text had them by checking the original
-    // substring. Simpler: trust the alternation as long as the match consumed
-    // everything up to and including the trailing `)`.
-    links.push({ text: m[1], url: inner });
+    // The URL group is greedy and the `(?:\s+"[^"]*")?` alternation cannot
+    // peel the title off without backtracking all the way to the end of the
+    // URL, so the captured `m[2]` is the full string with the title still
+    // glued on. Strip a trailing CommonMark title (`"..."` or `'...'`)
+    // here so downstream code (stat, fetch) gets the bare URL. Whitespace
+    // inside the URL is left alone — only a quoted string at the very end
+    // counts as a title per the CommonMark spec.
+    let url = m[2].replace(/\s+["'][^"']*["']\s*$/, "");
+    links.push({ text: m[1], url });
   }
   // CommonMark autolinks: <https://example.com>
   const autolink = /<(https?:\/\/[^>\s]+)>/g;

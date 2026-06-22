@@ -165,3 +165,69 @@ test("extracts CommonMark <https://...> autolinks", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("strips CommonMark title from inline local link URL", () => {
+  // [text](path "title") is a valid CommonMark form. The title is
+  // presentation-only — it must not be part of the URL passed to the
+  // filesystem check. Before the fix, the regex captured the title inside
+  // the URL, so `stat("page.md \"The home page\"")` returned ENOENT and a
+  // real existing file was reported as missing.
+  const dir = mkdtempSync(join(tmpdir(), "markly-title-"));
+  writeFileSync(join(dir, "page.md"), "# Page\n");
+  writeFileSync(
+    join(dir, "index.md"),
+    '[home](page.md "The home page")\n',
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /\[OK {2}\] page\.md/);
+    assert.ok(!r.stdout.includes("The home page"));
+    assert.ok(!r.stdout.includes("MISS"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips single-quoted title from inline local link URL", () => {
+  // CommonMark allows the title to be wrapped in '...' as well as "...".
+  // The title-stripping pass must accept both forms. A link with a
+  // single-quoted title and a missing target should be reported as MISS
+  // with just the bare URL, not the URL+title.
+  const dir = mkdtempSync(join(tmpdir(), "markly-title-sq-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "[absent](nope.md 'A page that is not here')\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const link = report.files[0].links[0];
+    assert.equal(link.url, "nope.md");
+    assert.equal(link.status, "missing");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips title from inline remote link URL in JSON report", () => {
+  // For a remote link, the title is never sent to the server — the URL we
+  // hand to fetch() must be the bare URL or HEAD/GET goes to a path with
+  // stray quote characters and the server returns 4xx.
+  const dir = mkdtempSync(join(tmpdir(), "markly-title-remote-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    '[home](https://example.com/page "the title")\n',
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const link = report.files[0].links[0];
+    assert.equal(link.url, "https://example.com/page");
+    assert.equal(link.text, "home");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
