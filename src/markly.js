@@ -59,19 +59,36 @@ async function walk(dir) {
   return out;
 }
 
-// Matches [text](url) and bare <url> forms. Skips code fences and inline code
-// via a simple pre-pass that strips them.
+// Matches [text](url), CommonMark <url> autolinks, and bare https?:// URLs.
+// Skips code fences and inline code via a simple pre-pass that strips them.
+// The URL portion allows one level of balanced parens — `[a](https://example.com/page_(x))`
+// would otherwise be truncated at the first `)` and end up as the bogus URL
+// `https://example.com/page_(x`, which silently fails a remote HEAD on every
+// real-world wiki link.
 function extractLinks(markdown) {
   const stripped = markdown
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  const inline = /\[([^\]]+)\]\(((?:[^()]+|\([^)]*\))+)(?:\s+"[^"]*")?\)/g;
   let m;
-  while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+  while ((m = inline.exec(stripped)) !== null) {
+    // The URL group is greedy and the `(?:\s+"[^"]*")?` alternation cannot
+    // peel the title off without backtracking all the way to the end of the
+    // URL, so the captured `m[2]` is the full string with the title still
+    // glued on. Strip a trailing CommonMark title (`"..."` or `'...'`)
+    // here so downstream code (stat, fetch) gets the bare URL. Whitespace
+    // inside the URL is left alone — only a quoted string at the very end
+    // counts as a title per the CommonMark spec.
+    let url = m[2].replace(/\s+["'][^"']*["']\s*$/, "");
+    links.push({ text: m[1], url });
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
+  // CommonMark autolinks: <https://example.com>
+  const autolink = /<(https?:\/\/[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
+    links.push({ text: m[1], url: m[1] });
+  }
+  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });
   }
@@ -86,9 +103,23 @@ function classify(url) {
 
 async function checkLocal(url, sourceFile) {
   const baseDir = dirname(sourceFile);
+  // Drop anchor + query first, then decode percent-encoded characters
+  // per CommonMark: `my%20file.md` should resolve to the on-disk
+  // `my file.md`, not be looked up literally with the %20 still in it.
   const stripped = url.split("#")[0].split("?")[0];
   if (!stripped) return { status: "ok", kind: "local-anchor" };
-  const abs = resolve(baseDir, stripped);
+  let abs;
+  try {
+    // decodeURIComponent can throw on a malformed sequence like "%ZZ";
+    // treat that as the caller authored the literal string and skip it.
+    abs = resolve(baseDir, decodeURIComponent(stripped));
+  } catch (err) {
+    if (err instanceof URIError) {
+      abs = resolve(baseDir, stripped);
+    } else {
+      throw err;
+    }
+  }
   try {
     const s = await stat(abs);
     if (s.isDirectory()) return { status: "ok", kind: "local-dir" };

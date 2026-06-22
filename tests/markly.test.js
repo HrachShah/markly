@@ -109,3 +109,125 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("resolves percent-encoded local links", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-encode-"));
+  writeFileSync(join(dir, "src.md"), "See [home](hello%20world.md).\n");
+  writeFileSync(join(dir, "hello world.md"), "# Hello\n");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /OK\s+\] hello%20world\.md/);
+    assert.ok(!r.stdout.includes("MISS"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("captures URLs with balanced parens in [text](url) form", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-paren-"));
+  // Wikipedia-style URL with one level of balanced parens should be captured
+  // whole, not truncated at the first `)`.
+  writeFileSync(
+    join(dir, "a.md"),
+    "See [wikipedia](https://en.wikipedia.org/wiki/URL_(URI)).\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const links = report.files[0].links;
+    // The link should include both opening and closing parens
+    const wiki = links.find((l) => l.url && l.url.includes("wikipedia"));
+    assert.ok(wiki, "expected wikipedia link to be extracted");
+    assert.ok(
+      wiki.url.endsWith("(URI))") || wiki.url.endsWith("(URI)"),
+      `expected URL to include trailing closing paren, got: ${wiki.url}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("extracts CommonMark <https://...> autolinks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-auto-"));
+  writeFileSync(
+    join(dir, "a.md"),
+    "Visit <https://example.com/page> today.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const links = report.files[0].links;
+    const autolink = links.find((l) => l.url === "https://example.com/page");
+    assert.ok(autolink, "expected <https://example.com/page> to be extracted");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips CommonMark title from inline local link URL", () => {
+  // [text](path "title") is a valid CommonMark form. The title is
+  // presentation-only — it must not be part of the URL passed to the
+  // filesystem check. Before the fix, the regex captured the title inside
+  // the URL, so `stat("page.md \"The home page\"")` returned ENOENT and a
+  // real existing file was reported as missing.
+  const dir = mkdtempSync(join(tmpdir(), "markly-title-"));
+  writeFileSync(join(dir, "page.md"), "# Page\n");
+  writeFileSync(
+    join(dir, "index.md"),
+    '[home](page.md "The home page")\n',
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /\[OK {2}\] page\.md/);
+    assert.ok(!r.stdout.includes("The home page"));
+    assert.ok(!r.stdout.includes("MISS"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips single-quoted title from inline local link URL", () => {
+  // CommonMark allows the title to be wrapped in '...' as well as "...".
+  // The title-stripping pass must accept both forms. A link with a
+  // single-quoted title and a missing target should be reported as MISS
+  // with just the bare URL, not the URL+title.
+  const dir = mkdtempSync(join(tmpdir(), "markly-title-sq-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "[absent](nope.md 'A page that is not here')\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const link = report.files[0].links[0];
+    assert.equal(link.url, "nope.md");
+    assert.equal(link.status, "missing");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips title from inline remote link URL in JSON report", () => {
+  // For a remote link, the title is never sent to the server — the URL we
+  // hand to fetch() must be the bare URL or HEAD/GET goes to a path with
+  // stray quote characters and the server returns 4xx.
+  const dir = mkdtempSync(join(tmpdir(), "markly-title-remote-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    '[home](https://example.com/page "the title")\n',
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const link = report.files[0].links[0];
+    assert.equal(link.url, "https://example.com/page");
+    assert.equal(link.text, "home");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
