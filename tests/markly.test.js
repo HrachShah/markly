@@ -109,3 +109,51 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("extracts URLs containing balanced parentheses in full", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-paren-"));
+  writeFileSync(
+    join(dir, "page.md"),
+    "# Title\n\nSee [Foo](https://en.wikipedia.org/wiki/Foo_(bar)) and [X](README.md).\n",
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const page = report.files.find((f) => f.path.endsWith("page.md"));
+    assert.ok(page);
+    const wiki = page.links.find((l) =>
+      l.url.startsWith("https://en.wikipedia.org/wiki/Foo_"),
+    );
+    assert.ok(wiki, "expected the Wikipedia disambiguation URL to be extracted");
+    assert.equal(
+      wiki.url,
+      "https://en.wikipedia.org/wiki/Foo_(bar)",
+      "closing paren inside URL must be preserved",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("recognizes links with empty URLs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-empty-"));
+  writeFileSync(
+    join(dir, "page.md"),
+    "# Title\n\nA [label]() link and a real [home](README.md).\n",
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const page = report.files.find((f) => f.path.endsWith("page.md"));
+    assert.ok(page);
+    const empties = page.links.filter((l) => l.url === "");
+    assert.equal(empties.length, 1, "expected exactly one empty-URL link");
+    assert.equal(empties[0].text, "label");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -66,7 +66,12 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  // Match [text](url) with optional "title". Allow one level of balanced
+  // parens inside the URL so links like
+  //   [Foo](https://en.wikipedia.org/wiki/Foo_(bar))
+  // are extracted as a single URL rather than being truncated at the first ')'.
+  // The URL is still required to be free of whitespace, matching CommonMark.
+  const re = /\[([^\]]*)\]\(((?:[^()\s]|\([^()]*\))*)(?:\s+"([^"]*)")?\)/g;
   let m;
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
