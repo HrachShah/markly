@@ -109,3 +109,46 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("decodes percent-encoded local filenames", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-pct-"));
+  mkdirSync(join(dir, "docs"), { recursive: true });
+  writeFileSync(join(dir, "docs", "with space.md"), "# Space\n");
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Index\n\nSee [space](docs/with%20space.md).\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /OK.*with%20space\.md/);
+    // The literal percent-encoded URL should appear in the report
+    // (so users can copy the original link), but the underlying lookup
+    // should have succeeded — so the file should not be marked missing.
+    assert.ok(!/MISS.*with%20space\.md/.test(r.stdout));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("falls back to literal lookup on malformed percent escapes", () => {
+  // `%ZZ` is not a valid percent escape, so decodeURIComponent throws
+  // a URIError. The CLI should treat that as "caller meant the literal
+  // string" rather than crashing the whole report.
+  const dir = mkdtempSync(join(tmpdir(), "markly-pctbad-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Index\n\n[bad](%ZZfile.md) and [real](README.md)\n",
+  );
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    // The malformed link should be reported as missing (literal lookup
+    // for "%ZZfile.md" doesn't exist on disk) without crashing the run.
+    assert.match(r.stdout, /MISS.*%ZZfile\.md/);
+    assert.match(r.stdout, /OK.*README\.md/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
