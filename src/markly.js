@@ -66,7 +66,10 @@ function extractLinks(markdown) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  // Allow balanced parens inside the URL so a link like
+  // [Java](https://en.wikipedia.org/wiki/Java_(programming_language))
+  // is recognized.
+  const re = /\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"]*")?\)/g;
   let m;
   while ((m = re.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[2] });
