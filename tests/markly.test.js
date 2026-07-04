@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -105,6 +105,30 @@ test("skips code-fenced links", () => {
     assert.match(r.stdout, /OK/);
     // fenced link should not appear in output
     assert.ok(!r.stdout.includes("definitely-not-a-real-link.md"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("does not loop on self-referencing symlink", () => {
+  // walk() previously used isDirectory() on a Dirent, which is true for
+  // symlinks pointing to directories, so a self-referencing symlink would
+  // recurse forever. The fix tracks realpath() of every visited directory
+  // and skips ones we have already seen. This test creates `root/sub` as a
+  // symlink back to `root` and confirms the CLI still terminates and the
+  // real files inside `root` are reported normally.
+  const dir = mkdtempSync(join(tmpdir(), "markly-symlink-"));
+  writeFileSync(join(dir, "index.md"), "# Root\n\n[home](README.md)\n");
+  writeFileSync(join(dir, "README.md"), "# Home\n");
+  // self-loop: dir/sub -> dir
+  symlinkSync(dir, join(dir, "sub"), "dir");
+  try {
+    const r = runCli([dir, "--no-fetch"]);
+    assert.equal(r.status, 0);
+    // The real files should still be found and reported OK.
+    assert.match(r.stdout, /OK.*README\.md/);
+    // The CLI should have terminated rather than recursing forever.
+    assert.ok(r.stdout.length > 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
