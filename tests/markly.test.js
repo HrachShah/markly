@@ -109,3 +109,37 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("rejects --timeout with a non-numeric value", () => {
+  // parseArgs used to silently fall back to the 5000ms default when the
+  // value couldn't be coerced (e.g. --timeout=abc or --timeout=0), so
+  // users setting a probe timeout had no idea their setting was being
+  // ignored. The fix exits 2 with a clear error instead.
+  const r = runCli(["--timeout=abc", "/tmp", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout=abc/);
+  assert.match(r.stderr, /positive number/);
+});
+
+test("rejects --timeout=0", () => {
+  const r = runCli(["--timeout=0", "/tmp", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout=0/);
+});
+
+test("rejects negative --timeout values", () => {
+  const r = runCli(["--timeout=-100", "/tmp", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout=-100/);
+});
+
+test("accepts a positive numeric --timeout", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-timeout-ok-"));
+  writeFileSync(join(dir, "index.md"), "# x\n");
+  try {
+    const r = runCli([dir, "--timeout=1500", "--no-fetch"]);
+    assert.equal(r.status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
