@@ -109,3 +109,63 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("rejects --timeout with a non-numeric value", () => {
+  // parseArgs used to silently fall back to the 5000ms default when the
+  // value couldn't be coerced (e.g. --timeout=abc or --timeout=0), so
+  // users setting a probe timeout had no idea their setting was being
+  // ignored. The fix exits 2 with a clear error instead.
+  const r = runCli(["--timeout=abc", "/tmp", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout=abc/);
+  assert.match(r.stderr, /positive number/);
+});
+
+test("rejects --timeout=0", () => {
+  const r = runCli(["--timeout=0", "/tmp", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout=0/);
+});
+
+test("rejects negative --timeout values", () => {
+  const r = runCli(["--timeout=-100", "/tmp", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--timeout=-100/);
+});
+
+test("accepts a positive numeric --timeout", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-timeout-ok-"));
+  writeFileSync(join(dir, "index.md"), "# x\n");
+  try {
+    const r = runCli([dir, "--timeout=1500", "--no-fetch"]);
+    assert.equal(r.status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("bare URL followed by sentence-ending punctuation is captured without the punctuation", () => {
+  // Regression: a bare URL written as "see https://example.com." (with
+  // the period as end-of-sentence) used to be captured as
+  // "https://example.com." which the remote probe then tried to fetch
+  // as a host with a literal period glued to the end, producing
+  // confusing DNS / TLS errors instead of the user's intended target.
+  const dir = mkdtempSync(join(tmpdir(), "markly-bare-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Title\n\nSee https://example.com. Also see https://other.com, and https://third.com; and https://fourth.com: the docs.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const urls = report.files[0].links.map((l) => l.url);
+    assert.ok(urls.includes("https://example.com"), `expected https://example.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://other.com"), `expected https://other.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://third.com"), `expected https://third.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://fourth.com"), `expected https://fourth.com, got ${JSON.stringify(urls)}`);
+    assert.ok(!urls.some((u) => /[.,;:]$/.test(u)), `no URL should retain trailing prose punctuation, got ${JSON.stringify(urls)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

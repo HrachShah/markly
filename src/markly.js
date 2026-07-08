@@ -34,8 +34,15 @@ function parseArgs(argv) {
     if (arg === "--no-fetch") { opts.fetch = false; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg.startsWith("--timeout=")) {
-      const v = Number(arg.slice("--timeout=".length));
-      if (Number.isFinite(v) && v > 0) opts.timeout = v;
+      const raw = arg.slice("--timeout=".length);
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v <= 0) {
+        process.stderr.write(
+          `error: --timeout=${raw} is not a positive number of milliseconds\n`
+        );
+        process.exit(2);
+      }
+      opts.timeout = v;
       continue;
     }
     if (arg.startsWith("--")) continue;
@@ -73,7 +80,20 @@ function extractLinks(markdown) {
   }
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
   while ((m = bare.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[1] });
+    // Trailing prose punctuation: `.`, `,`, `;`, `:` are not valid URL
+    // characters per RFC 3986, so a trailing run of them is almost always
+    // the surrounding sentence punctuation (e.g. "see https://x.com.")
+    // rather than part of the link. Strip a trailing run of those so the
+    // bare-URL path does not try to fetch a host with a literal period
+    // glued to the end. `?` and `!` are NOT stripped: `?` is the query
+    // separator and a URL may legitimately end in `!` if the path itself
+    // does (e.g. an exclamation in a slug). The closing-paren case
+    // `[bare](https://x.com)` is already handled by the regex excluding
+    // `)` from the URL character class.
+    let url = m[1];
+    const trailing = url.match(/[.,;:]+$/);
+    if (trailing) url = url.slice(0, -trailing[0].length);
+    links.push({ text: url, url });
   }
   return links;
 }
