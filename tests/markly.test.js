@@ -143,3 +143,29 @@ test("accepts a positive numeric --timeout", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("bare URL followed by sentence-ending punctuation is captured without the punctuation", () => {
+  // Regression: a bare URL written as "see https://example.com." (with
+  // the period as end-of-sentence) used to be captured as
+  // "https://example.com." which the remote probe then tried to fetch
+  // as a host with a literal period glued to the end, producing
+  // confusing DNS / TLS errors instead of the user's intended target.
+  const dir = mkdtempSync(join(tmpdir(), "markly-bare-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Title\n\nSee https://example.com. Also see https://other.com, and https://third.com; and https://fourth.com: the docs.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const urls = report.files[0].links.map((l) => l.url);
+    assert.ok(urls.includes("https://example.com"), `expected https://example.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://other.com"), `expected https://other.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://third.com"), `expected https://third.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://fourth.com"), `expected https://fourth.com, got ${JSON.stringify(urls)}`);
+    assert.ok(!urls.some((u) => /[.,;:]$/.test(u)), `no URL should retain trailing prose punctuation, got ${JSON.stringify(urls)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
