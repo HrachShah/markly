@@ -59,21 +59,53 @@ async function walk(dir) {
   return out;
 }
 
-// Matches [text](url) and bare <url> forms. Skips code fences and inline code
-// via a simple pre-pass that strips them.
+// Matches [text](url), <url> autolinks, and bare http(s) URLs. Skips code
+// fences and inline code via a simple pre-pass that strips them.
 function extractLinks(markdown) {
   const stripped = markdown
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  const seen = new Set();
+  const push = (url, text) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    links.push({ text: text ?? url, url });
+  };
+
+  // 1) [text](url) — capture both the visible text and the href.
+  const mdRe = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   let m;
-  while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+  while ((m = mdRe.exec(stripped)) !== null) {
+    push(m[2], m[1]);
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
-  while ((m = bare.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[1] });
+
+  // 2) Mask out the markdown-link spans we already captured so the bare-URL
+  //    pass does not re-emit the same href as a separate "bare" entry. The
+  //    mask preserves character positions (spaces, not \0) so the bare-URL
+  //    regex's `(?:^|[\s>])` anchor still fires correctly. The character
+  //    classes of the masked characters do not matter as long as they are
+  //    not URL characters; we use a single space, which is excluded from
+  //    both the markdown href and the bare-URL character class.
+  const masked = stripped.replace(
+    /\[[^\]]+\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    (_full, href) => " ".repeat(_full.length - href.length) + " ".repeat(href.length),
+  );
+
+  // 3) <https://...> autolinks (CommonMark §6.5) and bare http(s) URLs.
+  //    Trailing prose punctuation `.`, `,`, `;`, `:` is stripped: those
+  //    characters are not valid URL characters per RFC 3986, so a trailing
+  //    run of them is almost always the surrounding sentence punctuation
+  //    (e.g. "see https://x.com.") rather than part of the link. `?` and
+  //    `!` are NOT stripped: `?` is the query separator and a URL may
+  //    legitimately end in `!` if the path itself does.
+  const autoOrBare = /(?:^|[\s>])<?(https?:\/\/[^\s<>\)]+)>?/g;
+  while ((m = autoOrBare.exec(masked)) !== null) {
+    let url = m[1];
+    const trailing = url.match(/[.,;:]+$/);
+    if (trailing) url = url.slice(0, -trailing[0].length);
+    if (!url) continue;
+    push(url, url);
   }
   return links;
 }
