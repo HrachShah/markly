@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/markly.js",
-    "test": "node --test tests/"
+    "test": "node --test tests/markly.test.js tests/anchor-extra.test.js"
   },
   "engines": {
     "node": ">=18"

@@ -109,3 +109,78 @@ test("skips code-fenced links", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("markdown-link and bare-URL forms of the same href are reported once", () => {
+  // Regression: a URL written both as `[text](https://x.com)` and as a
+  // bare `https://x.com` (very common in README prose: "see [the spec](
+  // https://x.com/spec) for https://x.com/spec") used to be emitted twice,
+  // so the remote probe hit the network twice and the report showed the
+  // same target twice on the same file's row. The fix dedupes by URL.
+  const dir = mkdtempSync(join(tmpdir(), "markly-dedupe-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "see [the spec](https://example.com/spec) and also https://example.com/spec inline.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const urls = report.files[0].links.map((l) => l.url);
+    const matches = urls.filter((u) => u === "https://example.com/spec");
+    assert.equal(matches.length, 1, `expected exactly one entry, got ${JSON.stringify(urls)}`);
+    // The dedupe keeps the markdown-link entry (with visible text), not
+    // the bare one, so the report can show the descriptive label.
+    const entry = report.files[0].links.find((l) => l.url === "https://example.com/spec");
+    assert.equal(entry.text, "the spec");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("angle-bracket autolinks <https://...> are recognized", () => {
+  // CommonMark §6.5: <https://example.com> is a valid autolink. The
+  // original extractor only handled the bare form, so the angle-bracket
+  // variant was silently dropped from the report.
+  const dir = mkdtempSync(join(tmpdir(), "markly-autolink-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "go to <https://example.com/page> for details.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const urls = report.files[0].links.map((l) => l.url);
+    assert.ok(
+      urls.includes("https://example.com/page"),
+      `expected https://example.com/page, got ${JSON.stringify(urls)}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("bare URL followed by sentence-ending punctuation is captured without the punctuation", () => {  // Regression: a bare URL written as "see https://example.com." (with
+  // the period as end-of-sentence) used to be captured as
+  // "https://example.com." which the remote probe then tried to fetch
+  // as a host with a literal period glued to the end, producing
+  // confusing DNS / TLS errors instead of the user's intended target.
+  const dir = mkdtempSync(join(tmpdir(), "markly-bare-"));
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Title\n\nSee https://example.com. Also see https://other.com, and https://third.com; and https://fourth.com: the docs.\n",
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const urls = report.files[0].links.map((l) => l.url);
+    assert.ok(urls.includes("https://example.com"), `expected https://example.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://other.com"), `expected https://other.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://third.com"), `expected https://third.com, got ${JSON.stringify(urls)}`);
+    assert.ok(urls.includes("https://fourth.com"), `expected https://fourth.com, got ${JSON.stringify(urls)}`);
+    assert.ok(!urls.some((u) => /[.,;:]$/.test(u)), `no URL should retain trailing prose punctuation, got ${JSON.stringify(urls)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
