@@ -221,8 +221,11 @@ async function checkLocal(url, sourceFile, opts) {
   const anchor = hashIdx === -1 ? "" : url.slice(hashIdx + 1);
   // `[section](#install)` (no path prefix) is an anchor-only link that
   // resolves to the source file itself.
-  const isAnchorOnly = pathPart === "" || pathPart === "#";
-  const abs = isAnchorOnly ? sourceFile : resolve(baseDir, pathPart || "./");
+  const normalizedPath = pathPart === "" || pathPart === "." || pathPart === "./"
+    ? ""
+    : pathPart;
+  const isAnchorOnly = normalizedPath === "";
+  const abs = isAnchorOnly ? sourceFile : resolve(baseDir, pathPart);
   let targetStat;
   try {
     targetStat = await stat(abs);

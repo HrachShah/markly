@@ -77,3 +77,52 @@ test("anchor fragments: --no-anchor-check suppresses the check", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("anchor fragments: .#x and ./#x are treated as anchor-only and checked against the source file's own headings", () => {
+  // Regression: previously `[ok](.#missing)` and `[ok](./page.md#missing)`
+  // (where `./` and `.` appear before `#` and the path is otherwise empty)
+  // resolved the path part to a directory and returned status: "ok"
+  // without ever performing the heading lookup. The dot / dot-slash
+  // forms are conventional shorthand for "this file", so they should
+  // behave the same as `#x` (anchor-only) and the anchor should be
+  // verified against the source file's own headings.
+  const dir = mkdtempSync(join(tmpdir(), "markly-anchor4-"));
+  writeFileSync(
+    join(dir, "page.md"),
+    [
+      "# Real Heading",
+      "",
+      "Missing anchor with . prefix: [bad](.#no-such-thing)",
+      "Missing anchor with ./ prefix: [bad](./#no-such-thing)",
+    ].join("\n"),
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json", "--strict"]);
+    assert.equal(
+      r.status,
+      1,
+      "expected strict failure on missing anchors; stdout=\n" + r.stdout,
+    );
+    const report = JSON.parse(r.stdout);
+    const pageFile = report.files.find((f) => f.path.endsWith("page.md"));
+    const byUrl = new Map(pageFile.links.map((l) => [l.url, l]));
+
+    const dotBad = byUrl.get(".#no-such-thing");
+    assert.ok(dotBad, "expected .#no-such-thing in report");
+    assert.equal(
+      dotBad.status,
+      "missing-anchor",
+      "'.' prefix should be treated as anchor-only, not a path",
+    );
+
+    const dotSlashBad = byUrl.get("./#no-such-thing");
+    assert.ok(dotSlashBad, "expected ./#no-such-thing in report");
+    assert.equal(
+      dotSlashBad.status,
+      "missing-anchor",
+      "'./' prefix should be treated as anchor-only, not a path",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
