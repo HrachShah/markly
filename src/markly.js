@@ -40,6 +40,11 @@ function parseArgs(argv) {
         process.stderr.write(`error: --timeout must be a positive integer (got ${JSON.stringify(raw)})\n`);
         process.exit(2);
       }
+      const MAX_TIMEOUT_MS = 10 * 60 * 1000;
+      if (v > MAX_TIMEOUT_MS) {
+        process.stderr.write(`error: --timeout must be at most ${MAX_TIMEOUT_MS}ms (got ${v})\n`);
+        process.exit(2);
+      }
       opts.timeout = Math.floor(v);
       continue;
     }
