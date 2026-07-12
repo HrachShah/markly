@@ -70,22 +70,116 @@ async function walk(dir) {
 }
 
 // Matches [text](url) and bare <url> forms. Skips code fences and inline code
-// via a simple pre-pass that strips them.
+// via a simple pre-pass that strips them. The link-text -> link-url parser
+// below walks the string char-by-char starting at the '(' so a URL that
+// contains balanced parentheses (the CommonMark rule for unescaped parens in
+// a link destination) is captured in full; a flat [^)\s]+ regex would stop
+// at the first ')' and silently truncate URLs like
+// https://en.wikipedia.org/wiki/Node.js_(software) to
+// https://en.wikipedia.org/wiki/Node.js_(software.
 function extractLinks(markdown) {
   const stripped = markdown
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-  let m;
-  while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+  // Inline link: [text](url) or [text](url "title").
+  // Walk every '[' and try to parse a balanced-paren URL after the '('.
+  for (let i = 0; i < stripped.length; i++) {
+    if (stripped[i] !== "[") continue;
+    const textEnd = findClosingBracket(stripped, i);
+    if (textEnd === -1) continue;
+    let p = textEnd + 1;
+    if (stripped[p] !== "(") continue;
+    p++;
+    const url = readBalancedUrl(stripped, p);
+    if (url === null) continue;
+    p = url.end;
+    // Optional whitespace + "title" after the URL.
+    while (p < stripped.length && (stripped[p] === " " || stripped[p] === "\t"))
+      p++;
+    if (p < stripped.length && stripped[p] === '"') {
+      const titleEnd = findClosingQuote(stripped, p);
+      if (titleEnd !== -1) p = titleEnd + 1;
+    }
+    if (p < stripped.length && stripped[p] === ")") {
+      links.push({ text: stripped.slice(i + 1, textEnd), url: url.value });
+      i = p;
+    }
   }
+  // Bare http(s) URLs in the text.
   const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
+  let m;
   while ((m = bare.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });
   }
   return links;
+}
+
+// Find the next unescaped ']' starting from start (which must be '[').
+// Returns the index of ']' or -1 if no close is found.
+function findClosingBracket(s, start) {
+  for (let i = start + 1; i < s.length; i++) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      i++;
+      continue;
+    }
+    if (s[i] === "]") return i;
+  }
+  return -1;
+}
+
+// Starting just after the '(', read a CommonMark link destination: a sequence
+// of non-whitespace, non-control characters where '(' and ')' balance, and
+// any backslash escapes the next character. Returns { value, end } where
+// `value` is the URL (with escapes resolved) and `end` is the index of the
+// matching ')'. Returns null if the URL is empty or has unbalanced parens.
+function readBalancedUrl(s, start) {
+  let i = start;
+  let depth = 0;
+  let out = "";
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "\\" && i + 1 < s.length) {
+      out += s[i + 1];
+      i += 2;
+      continue;
+    }
+    if (c === "(") {
+      depth++;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === ")") {
+      if (depth === 0) {
+        if (out === "") return null;
+        return { value: out, end: i };
+      }
+      depth--;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      if (out === "") return null;
+      return { value: out, end: i };
+    }
+    out += c;
+    i++;
+  }
+  return null;
+}
+
+// Find the next unescaped '"' starting at start (which must be '"').
+function findClosingQuote(s, start) {
+  for (let i = start + 1; i < s.length; i++) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      i++;
+      continue;
+    }
+    if (s[i] === '"') return i;
+  }
+  return -1;
 }
 
 function classify(url) {

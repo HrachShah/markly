@@ -144,3 +144,60 @@ test("accepts --timeout at the 10-minute cap", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("extracts URLs containing balanced parentheses", () => {
+  // The old extractor split on the first ')' inside a URL, so a
+  // Wikipedia-style link or a foo(bar) URL was truncated to the
+  // first closing paren. The new parser balances parens, so the
+  // whole URL survives.
+  const dir = mkdtempSync(join(tmpdir(), "markly-paren-"));
+  writeFileSync(
+    join(dir, "with-parens.md"),
+    [
+      "# Links",
+      "",
+      "Wiki: [Node.js](https://en.wikipedia.org/wiki/Node.js_(software))",
+      "",
+      "Generic: [funky](https://example.com/foo(bar))",
+      "",
+      "Bare bare URL: <https://en.wikipedia.org/wiki/Node.js_(software)>",
+      "",
+      "Bare bare generic: <https://example.com/foo(bar)>",
+      "",
+    ].join("\n"),
+  );
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0, `stderr was ${r.stderr}`);
+    const report = JSON.parse(r.stdout);
+    const file = report.files.find((f) => f.path.endsWith("with-parens.md"));
+    assert.ok(file, "with-parens.md must be in the report");
+    const urls = file.links.map((l) => l.url);
+    assert.ok(
+      urls.includes("https://en.wikipedia.org/wiki/Node.js_(software)"),
+      `expected full wiki URL, got ${JSON.stringify(urls)}`,
+    );
+    assert.ok(
+      urls.includes("https://example.com/foo(bar)"),
+      `expected full foo(bar) URL, got ${JSON.stringify(urls)}`,
+    );
+    // No URL should be truncated mid-URL. The fixture intentionally
+    // includes balanced parens inside the URL, so the URLs may
+    // legitimately end with ')' (the closer). The previous extractor
+    // would have produced `Node.js_(software` (truncated at the
+    // first ')'), so check that no URL ends with the unterminated
+    // form `_(software` or `foo(bar` (open paren with no closer).
+    for (const u of urls) {
+      assert.ok(
+        !u.endsWith("_(software"),
+        `URL was truncated at the inner paren: ${u}`,
+      );
+      assert.ok(
+        !u.endsWith("/foo(bar"),
+        `URL was truncated at the inner paren: ${u}`,
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
