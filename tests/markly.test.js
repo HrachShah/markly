@@ -127,3 +127,20 @@ test("rejects negative --timeout", () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--timeout must be a positive integer/);
 });
+
+test("rejects --timeout larger than the 10-minute cap", () => {
+  const r = runCli([".", "--timeout=999999999", "--no-fetch"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /at most 600000/);
+});
+
+test("accepts --timeout at the 10-minute cap", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-cap-"));
+  writeFileSync(join(dir, "index.md"), "# Index\n");
+  try {
+    const r = runCli([dir, "--timeout=600000", "--no-fetch"]);
+    assert.equal(r.status, 0, `stderr was ${r.stderr}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
