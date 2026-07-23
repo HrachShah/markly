@@ -59,21 +59,37 @@ async function walk(dir) {
   return out;
 }
 
-// Matches [text](url) and bare <url> forms. Skips code fences and inline code
-// via a simple pre-pass that strips them.
+// Matches [text](url), bare <url> autolinks, and bare http(s) URLs. Skips
+// code fences and inline code via a simple pre-pass that strips them.
 function extractLinks(markdown) {
   const stripped = markdown
     .replace(/```[\s\S]*?```/g, "")
     .replace(/`[^`\n]*`/g, "");
   const links = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  const re = /\[[^\]]+\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   let m;
   while ((m = re.exec(stripped)) !== null) {
-    links.push({ text: m[1], url: m[2] });
+    links.push({ text: m[0].slice(1, m[0].indexOf("]")), url: m[1] });
   }
-  const bare = /(?:^|[\s>])(https?:\/\/[^\s<>\)]+)/g;
-  while ((m = bare.exec(stripped)) !== null) {
+  // CommonMark autolinks: <https://example.com>. The angle brackets are
+  // significant (they disambiguate from a bare URL with no surrounding
+  // markup), so we keep them distinct from the bare-URL pass below.
+  const autolink = /<(https?:\/\/[^>\s]+)>/g;
+  while ((m = autolink.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });
+  }
+  // Bare http(s) URLs not already inside a markdown link or autolink. The
+  // lookbehind prevents double-counting the autolink URLs above, which the
+  // engine still matches against the http:// prefix when re-evaluated by
+  // this regex without it.
+  const bare = /(?<![<"])(?:^|[\s>(\[])(https?:\/\/[^\s<>)"]+)/g;
+  while ((m = bare.exec(stripped)) !== null) {
+    // Strip a single trailing punctuation character (e.g. ".", ",", ")")
+    // that is more likely sentence punctuation than part of the URL.
+    const raw = m[1];
+    const cleaned = raw.replace(/[.,;!?]+$/, "");
+    if (!cleaned) continue;
+    links.push({ text: cleaned, url: cleaned });
   }
   return links;
 }
@@ -187,7 +203,14 @@ async function run(opts) {
     process.stderr.write("Run `markly --help` for usage.\n");
     process.exit(2);
   }
-  const rootStat = await stat(opts.dir);
+  let rootStat;
+  try {
+    rootStat = await stat(opts.dir);
+  } catch (err) {
+    const detail = err && err.code === "ENOENT" ? "directory not found" : (err.message || String(err));
+    process.stderr.write(`error: ${opts.dir} — ${detail}\n`);
+    process.exit(2);
+  }
   if (!rootStat.isDirectory()) {
     process.stderr.write(`error: ${opts.dir} is not a directory\n`);
     process.exit(2);
