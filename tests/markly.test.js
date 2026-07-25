@@ -89,7 +89,20 @@ test("missing directory argument exits non-zero", () => {
 test("non-existent path exits non-zero", () => {
   const r = runCli(["/tmp/markly-no-such-dir-xyz"]);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /fatal: Error/);
+  assert.match(r.stderr, /directory not found/);
+});
+
+test("does not report the same URL twice when it is both linked and bare", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-duplicate-"));
+  writeFileSync(join(dir, "links.md"), "[site](https://example.com) and https://example.com.\n");
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"]);
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    assert.equal(report.files[0].links.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("skips code-fenced links", () => {

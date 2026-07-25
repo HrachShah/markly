@@ -78,6 +78,7 @@ function extractLinks(markdown) {
   while ((m = autolink.exec(stripped)) !== null) {
     links.push({ text: m[1], url: m[1] });
   }
+  const extractedUrls = new Set(links.map((link) => link.url));
   // Bare http(s) URLs not already inside a markdown link or autolink. The
   // lookbehind prevents double-counting the autolink URLs above, which the
   // engine still matches against the http:// prefix when re-evaluated by
@@ -88,7 +89,7 @@ function extractLinks(markdown) {
     // that is more likely sentence punctuation than part of the URL.
     const raw = m[1];
     const cleaned = raw.replace(/[.,;!?]+$/, "");
-    if (!cleaned) continue;
+    if (!cleaned || extractedUrls.has(cleaned)) continue;
     links.push({ text: cleaned, url: cleaned });
   }
   return links;
