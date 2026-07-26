@@ -80,6 +80,18 @@ test("--json emits a parseable report", () => {
   }
 });
 
+test("invalid timeout exits non-zero", () => {
+  const r = runCli([".", "--timeout=not-a-number"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /invalid timeout: not-a-number/);
+});
+
+test("zero timeout exits non-zero", () => {
+  const r = runCli([".", "--timeout=0"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /invalid timeout: 0/);
+});
+
 test("missing directory argument exits non-zero", () => {
   const r = runCli([]);
   assert.notEqual(r.status, 0);

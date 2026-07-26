@@ -34,8 +34,12 @@ function parseArgs(argv) {
     if (arg === "--no-fetch") { opts.fetch = false; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg.startsWith("--timeout=")) {
-      const v = Number(arg.slice("--timeout=".length));
-      if (Number.isFinite(v) && v > 0) opts.timeout = v;
+      const value = arg.slice("--timeout=".length);
+      const v = Number(value);
+      if (!Number.isFinite(v) || v <= 0) {
+        return { error: `invalid timeout: ${value}` };
+      }
+      opts.timeout = v;
       continue;
     }
     if (arg.startsWith("--")) continue;
@@ -250,6 +254,11 @@ const opts = parseArgs(argv);
 if (opts.help) {
   printHelp();
   process.exit(0);
+}
+if (opts.error) {
+  process.stderr.write(`error: ${opts.error}\n`);
+  process.stderr.write("Run `markly --help` for usage.\n");
+  process.exit(2);
 }
 run(opts).catch((err) => {
   process.stderr.write(`fatal: ${err && err.stack ? err.stack : err}\n`);
