@@ -173,6 +173,7 @@ function formatReport(report, asJson) {
   for (const file of report.files) {
     lines.push(relative(report.root, file.path) || file.path);
     if (file.error) {
+      totalError++;
       lines.push(`  [ERR ] unable to read file — ${file.error}`);
       lines.push("");
       continue;
