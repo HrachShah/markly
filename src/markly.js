@@ -172,6 +172,11 @@ function formatReport(report, asJson) {
   let totalOk = 0, totalBroken = 0, totalMissing = 0, totalError = 0, totalSkip = 0;
   for (const file of report.files) {
     lines.push(relative(report.root, file.path) || file.path);
+    if (file.error) {
+      lines.push(`  [ERR ] unable to read file — ${file.error}`);
+      lines.push("");
+      continue;
+    }
     if (file.links.length === 0) {
       lines.push("  (no links)");
       lines.push("");
@@ -223,7 +228,14 @@ async function run(opts) {
   const files = await walk(opts.dir);
   const report = { root: opts.dir, files: [] };
   for (const f of files) {
-    const md = await readFile(f, "utf8");
+    let md;
+    try {
+      md = await readFile(f, "utf8");
+    } catch (err) {
+      const detail = err && err.code === "EACCES" ? "permission denied" : (err.message || String(err));
+      report.files.push({ path: f, links: [], error: detail });
+      continue;
+    }
     const links = extractLinks(md);
     const checked = [];
     for (const link of links) {

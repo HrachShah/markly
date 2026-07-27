@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -14,6 +14,7 @@ function runCli(args, opts = {}) {
     encoding: "utf8",
     cwd: opts.cwd ?? HERE,
     timeout: 15000,
+    ...(opts.uid ? { uid: opts.uid, gid: opts.gid ?? opts.uid } : {}),
   });
 }
 
@@ -131,6 +132,27 @@ test("skips code-fenced links", () => {
     // fenced link should not appear in output
     assert.ok(!r.stdout.includes("definitely-not-a-real-link.md"));
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("reports unreadable markdown files instead of aborting the scan", () => {
+  const dir = mkdtempSync(join(tmpdir(), "markly-unreadable-"));
+  const unreadable = join(dir, "private.md");
+  writeFileSync(unreadable, "[missing](nope.md)\n");
+  chmodSync(dir, 0o755);
+  chmodSync(unreadable, 0o000);
+  try {
+    const r = runCli([dir, "--no-fetch", "--json"], { cwd: "/tmp", uid: 65534 });
+    assert.equal(r.status, 0);
+    const report = JSON.parse(r.stdout);
+    const file = report.files.find((entry) => entry.path === unreadable);
+    assert.ok(file);
+    assert.equal(file.error, "permission denied");
+    assert.deepEqual(file.links, []);
+  } finally {
+    chmodSync(unreadable, 0o600);
     rmSync(dir, { recursive: true, force: true });
   }
 });
