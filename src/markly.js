@@ -39,7 +39,8 @@ function parseArgs(argv) {
       continue;
     }
     if (arg.startsWith("--")) continue;
-    if (!opts.dir) opts.dir = resolve(arg);
+    if (opts.dir) return { error: "only one directory may be scanned" };
+    opts.dir = resolve(arg);
   }
   return opts;
 }
@@ -226,6 +227,11 @@ const opts = parseArgs(argv);
 if (opts.help) {
   printHelp();
   process.exit(0);
+}
+if (opts.error) {
+  process.stderr.write(`error: ${opts.error}\n`);
+  process.stderr.write("Run `markly --help` for usage.\n");
+  process.exit(2);
 }
 run(opts).catch((err) => {
   process.stderr.write(`fatal: ${err && err.stack ? err.stack : err}\n`);

@@ -80,6 +80,12 @@ test("--json emits a parseable report", () => {
   }
 });
 
+test("multiple directories exit non-zero instead of silently ignoring the second", () => {
+  const r = runCli([".", "src"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /only one directory may be scanned/);
+});
+
 test("missing directory argument exits non-zero", () => {
   const r = runCli([]);
   assert.notEqual(r.status, 0);
