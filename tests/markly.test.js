@@ -86,6 +86,19 @@ test("multiple directories exit non-zero instead of silently ignoring the second
   assert.match(r.stderr, /only one directory may be scanned/);
 });
 
+test("invalid timeout exits non-zero instead of using the default", () => {
+  for (const value of ["0", "-5", "abc"]) {
+    const r = runCli([".", `--timeout=${value}`]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, new RegExp(`invalid timeout: ${value}`));
+  }
+});
+
+test("fractional timeout is normalised to whole milliseconds", () => {
+  const r = runCli([".", "--timeout=1500.7", "--no-fetch"]);
+  assert.equal(r.status, 0);
+});
+
 test("missing directory argument exits non-zero", () => {
   const r = runCli([]);
   assert.notEqual(r.status, 0);

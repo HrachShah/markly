@@ -34,8 +34,12 @@ function parseArgs(argv) {
     if (arg === "--no-fetch") { opts.fetch = false; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg.startsWith("--timeout=")) {
-      const v = Number(arg.slice("--timeout=".length));
-      if (Number.isFinite(v) && v > 0) opts.timeout = v;
+      const raw = arg.slice("--timeout=".length);
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v <= 0) {
+        return { error: `invalid timeout: ${raw}` };
+      }
+      opts.timeout = Math.floor(v);
       continue;
     }
     if (arg.startsWith("--")) continue;
